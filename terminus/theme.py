@@ -81,8 +81,13 @@ class TerminusGenerateThemeCommand(sublime_plugin.WindowCommand):
         elif theme == "default" or theme == "classic":
             variables = {}
         elif theme == "adaptive":
-            palette = sublime.ui_info()["color_scheme"]["palette"]
-            gray = "#888888"
+            ui_info = sublime.ui_info()
+            palette = ui_info["color_scheme"]["palette"]
+            is_dark_theme = ui_info["theme"]["style"] == "dark"
+            gray = "#DBDBDB"
+            selection = "#8e8e8e"
+            if is_dark_theme:
+                selection = "#665C54"
             window = sublime.active_window()
             if window:
                 _panel = "terminus_color_scheme"
@@ -99,6 +104,8 @@ class TerminusGenerateThemeCommand(sublime_plugin.WindowCommand):
             variables = {
                 "background": palette["background"],
                 "foreground": palette["foreground"],
+                "selection_foreground": palette["foreground"],
+                "selection": selection,
                 "black": "#000000",
                 "red": palette["redish"],
                 "green": palette["greenish"],
