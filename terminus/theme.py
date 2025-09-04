@@ -85,7 +85,7 @@ class TerminusGenerateThemeCommand(sublime_plugin.WindowCommand):
             palette = ui_info["color_scheme"]["palette"]
             is_dark_theme = ui_info["theme"]["style"] == "dark"
             gray = "#888888"
-            selection = "#8e8e8e"
+            selection = "#DBDBDB"
             if is_dark_theme:
                 selection = "#665C54"
             window = sublime.active_window()
