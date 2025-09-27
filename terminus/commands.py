@@ -932,125 +932,81 @@ class TerminusDeleteWordCommand(sublime_plugin.TextCommand):
 
 
 class ToggleTerminusPanelCommand(sublime_plugin.WindowCommand):
-    def __init__(self, *args, **kwargs):
-        self.cycled_panels = []
-        super().__init__(*args, **kwargs)
-
     def run(self, panel_name=None, cycle=False, reverse=False, hide_active=None, **kwargs):
         window = self.window
         recency_manager = RecencyManager.from_window(window)
         if not recency_manager:
             return
+            
         if cycle:
-            if panel_name:
-                raise ValueError("panel_name has to be None when cycle is True")
+            # Get all terminus panels
+            panels = self.get_terminus_panels()
+            if len(panels) == 0:
+                return
 
-            if not recency_manager.cycling_panels:
-                self.cycled_panels[:] = []
-                recency_manager.cycling_panels = True
-
-            panels = self.list_cycle_panels()
-            if panels:
-                if len(panels) == 1:
-                    # Only one panel exists, return the same panel
+            if len(panels) == 1:
+                # Single panel - just show it, don't cycle
+                if panels:
                     panel_name = panels[0]
-                else:
-                    if reverse:
-                        # Backward cycling: simple previous panel logic
-                        current_panel = window.active_panel()
-                        current_index = -1
-                        
-                        if current_panel and current_panel.startswith("output."):
-                            current_name = current_panel.replace("output.", "")
-                            try:
-                                current_index = panels.index(current_name)
-                            except ValueError:
-                                current_index = -1
-                        
-                        if current_index == -1:
-                            # No current panel found, go to last panel
-                            panel_name = panels[-1]
-                        else:
-                            # Backward: if at index 0, go to last; otherwise go to previous
-                            panel_name = panels[-1] if current_index == 0 else panels[current_index - 1]
-                    else:
-                        # Forward cycling: use existing cycling logic with wrap-around fix
-                        panel_name = next((p for p in panels if p not in self.cycled_panels), None)
-                        if panel_name:
-                            self.cycled_panels.append(panel_name)
-                        else:
-                            # When we reach the end, wrap around to the first panel
-                            self.cycled_panels[:] = []
-                            if panels:
-                                panel_name = panels[0]
-                                self.cycled_panels.append(panel_name)
             else:
-                self.cycled_panels[:] = []
-
+                # Multiple panels - cycle through them
+                current_panel = window.active_panel()
+                current_name = current_panel.replace("output.", "") if current_panel else None
+                
+                try:
+                    current_index = panels.index(current_name)
+                    if reverse:
+                        # Go to previous panel (wrap to end if at start)
+                        prev_index = current_index - 1
+                        if prev_index < 0:
+                            prev_index = prev_index + len(panels)
+                        panel_name = panels[prev_index]
+                    else:
+                        # Go to next panel (wrap to start if at end)
+                        next_index = (current_index + 1) % len(panels)
+                        panel_name = panels[next_index]
+                except (ValueError, IndexError):
+                    # Current panel not in list or error - just use first panel
+                    panel_name = panels[0] if panels else None
+        
+        # Use default panel if none specified
         if not panel_name:
             panel_name = recency_manager.recent_panel() or DEFAULT_PANEL
-
+        
+        # Show or toggle the panel
         terminus_view = window.find_output_panel(panel_name)
         if terminus_view:
             active_panel = window.active_panel()
-            if hide_active and active_panel == "output.{}".format(panel_name):
+            if hide_active and active_panel == f"output.{panel_name}":
                 window.run_command("hide_panel")
             else:
-                # Check if we're in a single panel situation during cycling
-                panels = self.list_cycle_panels() if cycle else []
-                use_toggle = True
-                
-                # Don't use toggle behavior when cycling with only one panel
-                # This prevents the panel from closing when Ctrl+Tab is pressed
-                if cycle and len(panels) == 1:
-                    use_toggle = False
-                
-                if use_toggle:
-                    window.run_command(
-                        "show_panel", {"panel": "output.{}".format(panel_name), "toggle": True})
-                else:
-                    window.run_command(
-                        "show_panel", {"panel": "output.{}".format(panel_name)})
+                # Toggle behavior - show if hidden, hide if visible
+                window.run_command(
+                    "show_panel", 
+                    {"panel": f"output.{panel_name}", "toggle": True}
+                )
                 window.focus_view(terminus_view)
-                # Update status message to show current panel
                 terminus_view.run_command("terminus_render")
         else:
+            # Panel doesn't exist, create it
             kwargs["panel_name"] = panel_name
             window.run_command("terminus_open", kwargs)
-
-    def list_cycle_panels(self):
+    
+    def get_terminus_panels(self):
+        """Get list of all terminus panel names"""
         window = self.window
-        recency_manager = RecencyManager.from_window(window)
-        if not recency_manager:
-            return
-
         panels = []
-        active_panel = window.active_panel()
-        active_index = -1
-
+        
         for p in window.panels():
             panel_name = p.replace("output.", "")
             if panel_name == EXEC_PANEL:
                 continue
             view = window.find_output_panel(panel_name)
             if view and view.settings().get("terminus_view"):
-                if p == active_panel:
-                    active_index = len(panels)
                 panels.append(panel_name)
-
-        if active_index != -1:
-            panels = panels[active_index+1:] + panels[:active_index+1]
-        else:
-            self.cycled_panels[:] = []
-            recent_panel_name = recency_manager.recent_panel()
-            try:
-                recent_index = panels.index(recent_panel_name)
-            except ValueError:
-                recent_index = -1
-            if recent_index != -1:
-                panels = panels[recent_index:] + panels[:recent_index]
-
+        
         return panels
+
 
 
 class TerminusFindTerminalMixin:
