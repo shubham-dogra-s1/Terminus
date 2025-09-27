@@ -382,11 +382,50 @@ class TerminusCloseCommand(sublime_plugin.TextCommand):
         if not view.settings().get("terminus_view"):
             return
 
+        window = view.window()
+        if not window:
+            return
+        
+        # Count available terminus panels
+        terminus_panels = []
+        for panel in window.panels():
+            panel_name = panel.replace("output.", "")
+            panel_view = window.find_output_panel(panel_name)
+            if panel_view and panel_view.settings().get("terminus_view"):
+                terminus_panels.append(panel_name)
+        
+        # If we have multiple panels and this is a panel view
+        panel_name = get_panel_name(view)
+        if len(terminus_panels) > 1 and panel_name:
+            # Find the previous panel to focus on
+            try:
+                current_index = terminus_panels.index(panel_name)
+                # Get previous panel (wrap around if we're at the first one)
+                prev_index = current_index - 1 if current_index > 0 else len(terminus_panels) - 1
+                prev_panel = terminus_panels[prev_index]
+                
+                # Kill the current terminal but navigate to the previous panel
+                terminal = Terminal.from_id(view.id())
+                if terminal:
+                    terminal.kill()
+                
+                window.destroy_output_panel(panel_name)
+                
+                # Show the previous panel
+                prev_view = window.find_output_panel(prev_panel)
+                if prev_view:
+                    window.run_command("show_panel", {"panel": f"output.{prev_panel}"})
+                    window.focus_view(prev_view)
+                return
+            except (ValueError, IndexError):
+                # Fall back to default behavior if anything goes wrong
+                pass
+        
+        # Default behavior for single panel or non-panel views
         terminal = Terminal.from_id(view.id())
         if terminal:
             terminal.kill()
 
-        panel_name = get_panel_name(view)
         if panel_name:
             window = get_panel_window(view)
             if window:
@@ -897,7 +936,7 @@ class ToggleTerminusPanelCommand(sublime_plugin.WindowCommand):
         self.cycled_panels = []
         super().__init__(*args, **kwargs)
 
-    def run(self, panel_name=None, cycle=False, hide_active=None, **kwargs):
+    def run(self, panel_name=None, cycle=False, reverse=False, hide_active=None, **kwargs):
         window = self.window
         recency_manager = RecencyManager.from_window(window)
         if not recency_manager:
@@ -912,11 +951,39 @@ class ToggleTerminusPanelCommand(sublime_plugin.WindowCommand):
 
             panels = self.list_cycle_panels()
             if panels:
-                panel_name = next((p for p in panels if p not in self.cycled_panels), None)
-                if panel_name:
-                    self.cycled_panels.append(panel_name)
+                if len(panels) == 1:
+                    # Only one panel exists, return the same panel
+                    panel_name = panels[0]
                 else:
-                    self.cycled_panels[:] = []
+                    if reverse:
+                        # Backward cycling: simple previous panel logic
+                        current_panel = window.active_panel()
+                        current_index = -1
+                        
+                        if current_panel and current_panel.startswith("output."):
+                            current_name = current_panel.replace("output.", "")
+                            try:
+                                current_index = panels.index(current_name)
+                            except ValueError:
+                                current_index = -1
+                        
+                        if current_index == -1:
+                            # No current panel found, go to last panel
+                            panel_name = panels[-1]
+                        else:
+                            # Backward: if at index 0, go to last; otherwise go to previous
+                            panel_name = panels[-1] if current_index == 0 else panels[current_index - 1]
+                    else:
+                        # Forward cycling: use existing cycling logic with wrap-around fix
+                        panel_name = next((p for p in panels if p not in self.cycled_panels), None)
+                        if panel_name:
+                            self.cycled_panels.append(panel_name)
+                        else:
+                            # When we reach the end, wrap around to the first panel
+                            self.cycled_panels[:] = []
+                            if panels:
+                                panel_name = panels[0]
+                                self.cycled_panels.append(panel_name)
             else:
                 self.cycled_panels[:] = []
 
@@ -929,9 +996,24 @@ class ToggleTerminusPanelCommand(sublime_plugin.WindowCommand):
             if hide_active and active_panel == "output.{}".format(panel_name):
                 window.run_command("hide_panel")
             else:
-                window.run_command(
-                    "show_panel", {"panel": "output.{}".format(panel_name), "toggle": True})
+                # Check if we're in a single panel situation during cycling
+                panels = self.list_cycle_panels() if cycle else []
+                use_toggle = True
+                
+                # Don't use toggle behavior when cycling with only one panel
+                # This prevents the panel from closing when Ctrl+Tab is pressed
+                if cycle and len(panels) == 1:
+                    use_toggle = False
+                
+                if use_toggle:
+                    window.run_command(
+                        "show_panel", {"panel": "output.{}".format(panel_name), "toggle": True})
+                else:
+                    window.run_command(
+                        "show_panel", {"panel": "output.{}".format(panel_name)})
                 window.focus_view(terminus_view)
+                # Update status message to show current panel
+                terminus_view.run_command("terminus_render")
         else:
             kwargs["panel_name"] = panel_name
             window.run_command("terminus_open", kwargs)
