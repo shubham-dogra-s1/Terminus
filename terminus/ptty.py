@@ -564,7 +564,6 @@ class TerminalScreen(pyte.Screen):
 
 
 PLAIN_TEXT = "plain_text"
-OSC_PARAM = "osc_param"
 
 
 class TerminalStream(pyte.Stream):
@@ -578,8 +577,6 @@ class TerminalStream(pyte.Stream):
             "02": "set_title",
             "1337": "handle_iterm_protocol"
         }
-        self._osc_termination_pattern = re.compile(
-            "|".join(map(re.escape, [ctrl.ST_C0, ctrl.ST_C1, ctrl.BEL, ctrl.CR])))
         self.yield_what = None
         super().__init__(*args, **kwargs)
 
@@ -660,6 +657,7 @@ class TerminalStream(pyte.Stream):
                     continue
 
                 basic_dispatch[char]()
+
             elif char == CSI_C1:
                 # All parameters are unsigned, positive decimal integers, with
                 # the most significant digit sent first. Any parameter greater
@@ -679,6 +677,7 @@ class TerminalStream(pyte.Stream):
                 private = False
                 while True:
                     char = yield
+
                     if char == "?":
                         private = True
                     elif char in ALLOWED_IN_CSI:
@@ -705,28 +704,25 @@ class TerminalStream(pyte.Stream):
                             else:
                                 csi_dispatch[char](*params)
                             break  # CSI is finished.
-            elif char == OSC_C1:
-                code = ""
-                while True:
-                    char = yield
-                    if char in OSC_TERMINATORS or char == ";":
-                        break
-                    code += char
 
+            elif char == OSC_C1:
+                code = yield None
                 if code == "R":
                     continue  # Reset palette. Not implemented.
                 elif code == "P":
                     continue  # Set palette. Not implemented.
 
                 param = ""
-                if char == ";":
-                    while True:
-                        block = yield OSC_PARAM
-                        if block in OSC_TERMINATORS:
-                            break
-                        param += block
+                while True:
+                    char = yield None
+                    if char == ESC:
+                        char += yield None
+                    if char in OSC_TERMINATORS:
+                        break
+                    else:
+                        param += char
 
-                osc_dispatch[code](param)
+                osc_dispatch[code](param[1:]) # Drop the ;.
 
             elif char not in NUL_OR_DEL:
                 draw(char)
@@ -735,7 +731,6 @@ class TerminalStream(pyte.Stream):
         send = self._parser.send
         draw = self.listener.draw
         match_text = self._text_pattern.match
-        search_osc = self._osc_termination_pattern.search
         yield_what = self.yield_what
 
         length = len(data)
@@ -748,17 +743,6 @@ class TerminalStream(pyte.Stream):
                     draw(data[start:offset])
                 else:
                     yield_what = None
-            elif yield_what == OSC_PARAM:
-                match = search_osc(data, offset)
-                if match:
-                    start, end = match.span()
-                    send(data[offset:start])
-                    send(data[start])
-                    offset = start + 1
-                    yield_what = None
-                else:
-                    send(data[offset:])
-                    offset = length
             else:
                 yield_what = send(data[offset:offset + 1])
                 offset += 1
